@@ -25,8 +25,8 @@ parser.add_argument(
     default="checkpoints",
     help="Where the model checkpoints are saved",
 )
-parser.add_argument("--input_file", type=str, default="", help="input file")
-parser.add_argument("--output_file", type=str, default="", help="output file")
+parser.add_argument("--input_path", type=str, default="", help="input file")
+parser.add_argument("--output_path", type=str, default="", help="output file")
 parser.add_argument(
     "--geom_name", type=str, default="feats2Geom", help="name of the geometry predictor"
 )
@@ -71,7 +71,7 @@ parser.add_argument(
     "--size", type=int, default=256, help="size of the data (squared assumed)"
 )
 parser.add_argument(
-    "--cuda", action="store_true", help="use GPU computation", default=True
+    "--cuda-device", action="store_true", help="use GPU computation", default=0
 )
 parser.add_argument(
     "--n_cpu",
@@ -137,26 +137,30 @@ opt.no_flip = True
 
 
 def main(opt):
-    if torch.cuda.is_available() and not opt.cuda:
-        print("WARNING: You have a CUDA device, so you should probably run with --cuda")
+    device = None
+    if torch.cuda.is_available():
+        device = f"cuda:{opt.cuda_device}"
+    else:
+        device = "cpu"
 
     with torch.no_grad():
         # Networks
 
         net_G = 0
         net_G = Generator(opt.input_nc, opt.output_nc, opt.n_blocks)
-        net_G.cuda()
+        net_G.to(device)
 
         net_GB = 0
         if opt.reconstruct == 1:
             net_GB = Generator(opt.output_nc, opt.input_nc, opt.n_blocks)
-            net_GB.cuda()
+            net_GB.to(device)
             net_GB.load_state_dict(
                 torch.load(
                     os.path.join(
                         opt.checkpoints_dir, opt.name, "netG_B_%s.pth" % opt.which_epoch
-                    )
-                )
+                    ),
+                    map_location=device,
+                ),
             )
             net_GB.eval()
 
@@ -174,8 +178,8 @@ def main(opt):
                 768, opt.geom_nc, n_downsampling=1, n_UPsampling=3
             )
 
-            netGeom.load_state_dict(torch.load(myname))
-            netGeom.cuda()
+            netGeom.load_state_dict(torch.load(myname, map_location=device))
+            netGeom.to(device)
             netGeom.eval()
 
             numclasses = opt.num_classes
@@ -188,7 +192,7 @@ def main(opt):
                 freeze=True,
                 every_feat=opt.every_feat == 1,
             )
-            net_recog.cuda()
+            net_recog.to(device)
             net_recog.eval()
 
         # Get absolute path relative to this file
@@ -197,7 +201,8 @@ def main(opt):
         # Load state dicts
         net_G.load_state_dict(
             torch.load(
-                os.path.join(cur_file, opt.name, "netG_A_%s.pth" % opt.which_epoch)
+                os.path.join(cur_file, opt.name, "netG_A_%s.pth" % opt.which_epoch),
+                map_location=device,
             )
         )
         print(
@@ -214,7 +219,7 @@ def main(opt):
         ]
 
         test_data = UnpairedDepthDataset(
-            opt.input_file,
+            opt.input_path,
             "",
             opt,
             transforms_r=transforms_r,
@@ -229,7 +234,7 @@ def main(opt):
 
         ###### Testing######
 
-        full_output_dir = os.path.join(opt.output_file)
+        full_output_dir = os.path.join(opt.output_path)
 
         if not os.path.exists(full_output_dir):
             os.makedirs(full_output_dir)
@@ -237,8 +242,8 @@ def main(opt):
         for i, batch in enumerate(dataloader):
             if i > opt.how_many:
                 break
-            img_r = Variable(batch["r"]).cuda()
-            img_depth = Variable(batch["depth"]).cuda()
+            img_r = Variable(batch["r"]).to(device)
+            img_depth = Variable(batch["depth"]).to(device)
             real_A = img_r
 
             name = batch["name"][0]
